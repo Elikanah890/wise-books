@@ -13,6 +13,9 @@ uploads/
 
 # Stray local files
 gg.jpeg
+/*.png
+/*.jpg
+/*.jpeg
 
 # Local backups and tooling artifacts (never commit)
 *.postgres.backup/
