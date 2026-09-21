@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { PAYMENT_PROVIDER, PAYMENT_STATUS } from '../utils/constants';
 import {
   amountIsAcceptable,
+  isPaymeSuccess,
   markPaymentCompleted,
   markPaymentFailed,
   referenceForOrder,
@@ -15,8 +16,8 @@ const STALE_PENDING_MS = 30 * 1000;
 /**
  * Fallback reconciliation: webhooks can be blocked by networks, so we poll
  * PayMe for payments that are still PENDING. We only ever mark PAID when the
- * provider confirms with provider_checked === true, payment_status COMPLETED,
- * and the returned amount matches the order amount exactly.
+ * provider query confirms payment_status SUCCESS/COMPLETED and the returned
+ * amount is within tolerance of the order amount.
  */
 export async function pollPendingPayments(): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_PENDING_MS);
@@ -31,6 +32,8 @@ export async function pollPendingPayments(): Promise<void> {
     take: 50,
   });
 
+  logger.info({ candidates: payments.length }, 'PayMe polling run');
+
   for (const payment of payments) {
     const attempts = Math.floor(
       (Date.now() - payment.createdAt.getTime()) / (env.PAYME_QUERY_INTERVAL_SECONDS * 1000)
@@ -43,16 +46,10 @@ export async function pollPendingPayments(): Promise<void> {
     try {
       const reference = payment.paymentReference ?? referenceForOrder(payment.orderId);
       const result = await payme.queryTransaction(reference);
-      const status = String(result.payment_status ?? '').toUpperCase();
 
-      if (status === 'COMPLETED') {
-        if (result.provider_checked !== true) {
-          logger.warn(
-            { paymentId: payment.id },
-            'Ignoring COMPLETED without provider_checked=true'
-          );
-          continue;
-        }
+      // Live PayMe returns payment_status = "SUCCESS" for a settled payment and
+      // may report provider_checked = false, so trust the status value.
+      if (isPaymeSuccess(result.payment_status)) {
         const received = Number(result.amount);
         if (!amountIsAcceptable(received, payment.order.amount)) {
           logger.warn(
@@ -68,7 +65,7 @@ export async function pollPendingPayments(): Promise<void> {
         }
         await markPaymentCompleted(payment.orderId, result);
         logger.info({ paymentId: payment.id }, 'Polling reconciled a completed payment');
-      } else if (status === 'FAILED') {
+      } else if (String(result.payment_status ?? '').toUpperCase() === 'FAILED') {
         await markPaymentFailed(payment.orderId, 'Provider reported a failed payment (poll)', result);
       }
     } catch (error) {

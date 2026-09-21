@@ -23,6 +23,16 @@ const cases: Case[] = [
     expected: 'COMPLETED',
   },
   {
+    label: 'status SUCCESS (live PayMe terminal status) -> COMPLETED',
+    payload: { result: 'SUCCESS', payment_status: 'SUCCESS' },
+    expected: 'COMPLETED',
+  },
+  {
+    label: 'status SUCCESS alone -> COMPLETED',
+    payload: { payment_status: 'SUCCESS' },
+    expected: 'COMPLETED',
+  },
+  {
     label: 'result FAILED -> FAILED',
     payload: { result: 'FAILED', payment_status: 'PENDING' },
     expected: 'FAILED',

@@ -16,6 +16,9 @@ async function bootstrap(): Promise<void> {
     logger.info('PayMe Africa payment integration is active (live)');
   });
 
+  logger.info(
+    `Payment polling started (every ${env.PAYME_QUERY_INTERVAL_SECONDS}s, max ${env.PAYME_QUERY_MAX_ATTEMPTS} attempts)`
+  );
   const pollTimer = setInterval(() => {
     void pollPendingPayments();
   }, POLL_INTERVAL_MS);

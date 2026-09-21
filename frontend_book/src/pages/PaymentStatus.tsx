@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
-import { CheckCircle2, Clock, Download, Loader2, Smartphone, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Download, Loader2, RefreshCw, Smartphone, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { paymentsApi, type PaymentStatusView } from '../api/payments';
 import Button from '../components/ui/Button';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -10,36 +10,50 @@ import { formatCurrency } from '../utils/helpers';
 import { EASE } from '../components/motion';
 
 const POLL_INTERVAL_MS = 5000;
-const TIMEOUT_MS = 5 * 60 * 1000;
+const TIMEOUT_MS = 15 * 60 * 1000;
 
 export default function PaymentStatus() {
   const t = useT();
   const { paymentId } = useParams<{ paymentId: string }>();
-  const navigate = useNavigate();
   const [payment, setPayment] = useState<PaymentStatusView | null>(null);
   const [loading, setLoading] = useState(true);
   const [timedOut, setTimedOut] = useState(false);
+  const [checking, setChecking] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
   const startedAtRef = useRef(Date.now());
 
-  const poll = useCallback(async () => {
-    if (!paymentId) return;
-    try {
-      const result = await paymentsApi.status(paymentId);
-      setPayment(result);
-      setLoading(false);
+  const poll = useCallback(
+    async (manual = false) => {
+      if (!paymentId) return;
+      if (manual) setChecking(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
 
-      if (result.status === 'PENDING') {
-        if (Date.now() - startedAtRef.current >= TIMEOUT_MS) {
-          setTimedOut(true);
-          return;
+      try {
+        const result = await paymentsApi.status(paymentId);
+        setPayment(result);
+
+        if (result.status === 'PENDING') {
+          if (manual) setTimedOut(false);
+          if (!manual && Date.now() - startedAtRef.current >= TIMEOUT_MS) {
+            setTimedOut(true);
+          } else {
+            timerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+          }
         }
-        timerRef.current = setTimeout(poll, POLL_INTERVAL_MS);
+      } catch {
+        // Transient error: keep retrying until the timeout window closes.
+        if (Date.now() - startedAtRef.current < TIMEOUT_MS) {
+          timerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+        } else {
+          setTimedOut(true);
+        }
+      } finally {
+        setLoading(false);
+        if (manual) setChecking(false);
       }
-    } catch {
-      setLoading(false);
-    }
-  }, [paymentId]);
+    },
+    [paymentId]
+  );
 
   useEffect(() => {
     startedAtRef.current = Date.now();
@@ -128,6 +142,16 @@ export default function PaymentStatus() {
       )}
 
       <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+        {status === 'PENDING' && (
+          <Button
+            variant="outline"
+            isLoading={checking}
+            onClick={() => void poll(true)}
+            leftIcon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          >
+            {t.payment.checkStatus}
+          </Button>
+        )}
         {(status === 'FAILED' || timedOut) && payment?.bookId && (
           <Link to={`/checkout/${payment.bookId}`}>
             <Button>{t.payment.retry}</Button>

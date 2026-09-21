@@ -128,6 +128,7 @@ const en = {
     timedOutDesc:
       'If you completed the payment and this page has not updated, please contact support with your order reference.',
     retry: 'Try again',
+    checkStatus: 'Check status manually',
     backToBooks: 'Back to books',
   },
   download: {
@@ -406,6 +407,7 @@ const sw: typeof en = {
     timedOutDesc:
       'Kama ulikamilisha malipo na ukurasa huu haujabadilika, tafadhali wasiliana nasi ukiwa na kumbukumbu ya oda yako.',
     retry: 'Jaribu tena',
+    checkStatus: 'Angalia hali mwenyewe',
     backToBooks: 'Rudi kwa vitabu',
   },
   download: {

@@ -206,10 +206,21 @@ interface PaymeWebhookPayload {
 export type PaymeWebhookOutcome = 'FAILED' | 'PENDING' | 'COMPLETED';
 
 /**
+ * PayMe uses "SUCCESS" for a settled payment (the documented "COMPLETED" never
+ * appears in the live responses). We accept both so the code works whether the
+ * provider reports SUCCESS or COMPLETED.
+ */
+export function isPaymeSuccess(status: unknown): boolean {
+  const value = String(status ?? '').toUpperCase();
+  return value === 'SUCCESS' || value === 'COMPLETED';
+}
+
+/**
  * Classifies a PayMe webhook. A webhook may only be treated as COMPLETED when
- * PayMe reports payment_status = COMPLETED. The "wallet push successful"
- * notification arrives with result=SUCCESS but payment_status=PENDING and MUST
- * be treated as PENDING (otherwise the book is released before payment).
+ * PayMe reports payment_status = SUCCESS or COMPLETED. The "wallet push
+ * successful" notification arrives with result=SUCCESS but payment_status
+ * =PENDING and MUST be treated as PENDING (otherwise the book is released
+ * before the customer has actually paid).
  */
 export function classifyWebhook(payload: {
   result?: string;
@@ -217,9 +228,9 @@ export function classifyWebhook(payload: {
 }): PaymeWebhookOutcome {
   const status = String(payload.payment_status ?? '').toUpperCase();
   const result = String(payload.result ?? '').toUpperCase();
+  if (isPaymeSuccess(status)) return 'COMPLETED';
   if (status === 'FAILED' || result === 'FAILED') return 'FAILED';
-  if (status !== 'COMPLETED') return 'PENDING';
-  return 'COMPLETED';
+  return 'PENDING';
 }
 
 /**
@@ -311,11 +322,13 @@ export async function handleCallback(
     return { received: true, pending: true };
   }
 
-  const verifiedStatus = String(verification.payment_status ?? '').toUpperCase();
-  if (verification.provider_checked !== true || verifiedStatus !== 'COMPLETED') {
+  // NOTE: live PayMe /query returns payment_status = "SUCCESS" (not "COMPLETED")
+  // and may return provider_checked = false even for a settled payment, so we
+  // trust the payment_status value itself.
+  if (!isPaymeSuccess(verification.payment_status)) {
     logger.warn(
-      { reference, verifiedStatus, providerChecked: verification.provider_checked },
-      'Webhook said COMPLETED but PayMe query did not confirm — leaving PENDING'
+      { reference, verifiedStatus: verification.payment_status },
+      'Webhook said completed but PayMe query did not confirm — leaving PENDING'
     );
     return { received: true, pending: true };
   }
