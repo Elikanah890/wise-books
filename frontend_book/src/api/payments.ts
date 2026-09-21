@@ -1,5 +1,5 @@
 import type { Paginated } from '../types/api';
-import type { AdminPayment } from '../types/order';
+import type { AdminPayment, PaymentStatus } from '../types/order';
 import { api } from './client';
 
 export interface AdminPaymentQuery {
@@ -10,14 +10,27 @@ export interface AdminPaymentQuery {
   limit?: number;
 }
 
+export interface PaymentStatusView {
+  id: string;
+  status: PaymentStatus;
+  amount: number;
+  orderId: string;
+  orderStatus: string;
+  bookId: string;
+  bookTitle: string | null;
+  downloadToken: string | null;
+}
+
 export const paymentsApi = {
   initiate: (orderId: string) =>
     api.post<{
+      paymentId: string;
       orderId: string;
-      orderStatus: string;
-      paymentStatus: string;
-      paymentReference: string;
-    }>('/payments/selcom/initiate', { orderId }),
+      status: string;
+      transactionId: string | null;
+      message: string;
+    }>('/payments/payme/initiate', { orderId }),
+  status: (paymentId: string) => api.get<PaymentStatusView>(`/payments/${paymentId}/status`),
 };
 
 export const adminPaymentsApi = {

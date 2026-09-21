@@ -38,3 +38,40 @@ export const paymentLimiter = rateLimit({
     error: { code: 'RATE_LIMITED', message: 'Too many requests, try again later' },
   },
 });
+
+// PayMe endpoints
+export const initiateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many payment attempts, try again later' },
+  },
+});
+
+export const callbackLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many callbacks, try again later' },
+  },
+});
+
+export const statusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+  message: {
+    success: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many status checks, try again later' },
+  },
+});

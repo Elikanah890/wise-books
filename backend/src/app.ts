@@ -4,6 +4,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { env } from './config/env';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { callbackRawParser, captureRawBody } from './middleware/rawBody';
 import routes from './routes';
 
 const allowedOrigins = env.CORS_ORIGIN.split(',').map((origin) => origin.trim());
@@ -28,6 +29,10 @@ export function createApp(): express.Express {
   app.set('trust proxy', 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cors(corsOptions));
+
+  // Capture the exact bytes of the PayMe callback BEFORE the JSON parser runs.
+  app.use('/api/payments/payme/callback', callbackRawParser, captureRawBody);
+
   app.use(
     express.json({
       limit: '1mb',

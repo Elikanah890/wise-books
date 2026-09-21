@@ -2,9 +2,9 @@ import { createApp } from './app';
 import { env } from './config/env';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
-import { pollStalePendingOrders } from './services/payment.service';
+import { pollPendingPayments } from './services/paymentVerification.service';
 
-const POLL_INTERVAL_MS = 60 * 1000;
+const POLL_INTERVAL_MS = env.PAYME_QUERY_INTERVAL_SECONDS * 1000;
 
 async function bootstrap(): Promise<void> {
   const app = createApp();
@@ -13,13 +13,11 @@ async function bootstrap(): Promise<void> {
 
   const server = app.listen(env.PORT, () => {
     logger.info(`Server listening on http://localhost:${env.PORT}`);
-    if (!env.selcomConfigured) {
-      logger.warn('Selcom integration is not configured (awaiting official API documentation)');
-    }
+    logger.info('PayMe Africa payment integration is active (live)');
   });
 
   const pollTimer = setInterval(() => {
-    void pollStalePendingOrders();
+    void pollPendingPayments();
   }, POLL_INTERVAL_MS);
 
   const shutdown = async (signal: string): Promise<void> => {

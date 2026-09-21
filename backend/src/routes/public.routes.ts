@@ -3,17 +3,15 @@ import * as bookController from '../controllers/book.controller';
 import * as categoryController from '../controllers/category.controller';
 import * as downloadController from '../controllers/download.controller';
 import * as orderController from '../controllers/order.controller';
-import * as paymentController from '../controllers/payment.controller';
 import * as settingsController from '../controllers/settings.controller';
 import * as commentController from '../controllers/comment.controller';
 import { prisma } from '../lib/prisma';
-import { paymentLimiter, orderLimiter } from '../middleware/rateLimit';
+import { orderLimiter } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import { sendSuccess } from '../utils/response';
 import { bookIdParamSchema, publicBookQuerySchema } from '../validators/book.validator';
 import { createOrderSchema, orderIdParamSchema } from '../validators/order.validator';
-import { initiatePaymentSchema } from '../validators/payment.validator';
 
 const router = Router();
 
@@ -43,16 +41,6 @@ router.get(
   validate({ params: orderIdParamSchema }),
   orderController.status
 );
-
-router.post(
-  '/payments/selcom/initiate',
-  paymentLimiter,
-  validate({ body: initiatePaymentSchema }),
-  paymentController.initiate
-);
-
-// Signature-verified webhook (no JWT). Raw body is captured in app.ts.
-router.post('/payments/selcom/callback', paymentController.callback);
 
 router.get('/download/:token', downloadController.resolve);
 

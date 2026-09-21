@@ -43,16 +43,9 @@ export default function Checkout() {
         buyerEmail: buyerEmail.trim(),
         buyerPhone: normalizedPhone,
       });
-      try {
-        await paymentsApi.initiate(order.id);
-        navigate(`/payment-status/${order.id}`);
-      } catch (initiateError) {
-        const message =
-          initiateError instanceof ApiError
-            ? initiateError.message
-            : 'Could not start the payment';
-        navigate(`/payment-status/${order.id}`, { state: { paymentError: message } });
-      }
+      // Ask the backend to start the PayMe collection; it returns the paymentId to poll.
+      const payment = await paymentsApi.initiate(order.id);
+      navigate(`/payment-status/${payment.paymentId}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the order');
     } finally {

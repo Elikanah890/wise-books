@@ -3,18 +3,33 @@ import { env } from '../config/env';
 import { logger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { AppError } from '../utils/AppError';
-import { ORDER_STATUS, PAYMENT_STATUS, type PaymentStatus } from '../utils/constants';
+import {
+  ORDER_STATUS,
+  PAYMENT_PROVIDER,
+  PAYMENT_STATUS,
+  type PaymentStatus,
+} from '../utils/constants';
 import { generateDownloadToken } from '../utils/token';
-import * as selcom from './selcom.service';
+import * as payme from './payme.service';
 
 const CALLBACK_MAX_AGE_MS = 5 * 60 * 1000;
-const STALE_PENDING_MS = 3 * 60 * 1000;
+export const PAYME_REFERENCE_PREFIX = 'ORDER_';
 
+export function referenceForOrder(orderId: string): string {
+  return `${PAYME_REFERENCE_PREFIX}${orderId}`;
+}
+
+export function orderIdFromReference(reference: string): string | null {
+  if (typeof reference !== 'string' || !reference.startsWith(PAYME_REFERENCE_PREFIX)) {
+    return null;
+  }
+  const id = reference.slice(PAYME_REFERENCE_PREFIX.length);
+  return id.length > 0 ? id : null;
+}
+
+/** Starts a mobile-money collection. Amount always comes from the order, never the client. */
 export async function initiatePayment(orderId: string) {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: { book: true },
-  });
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
   if (!order) {
     throw new AppError(404, 'NOT_FOUND', 'Order not found');
   }
@@ -22,93 +37,117 @@ export async function initiatePayment(orderId: string) {
     throw new AppError(409, 'ORDER_NOT_PENDING', 'This order is not awaiting payment');
   }
 
-  // Throws SELCOM_NOT_CONFIGURED (503) while the integration awaits official docs.
-  const result = await selcom.createOrder({
-    orderId: order.id,
-    amount: order.amount,
-    buyerEmail: order.buyerEmail,
-    buyerPhone: order.buyerPhone,
-    bookTitle: order.book.title,
-  });
+  const reference = referenceForOrder(order.id);
+
+  let response: payme.PaymeCollectionResponse;
+  try {
+    response = await payme.createCollection({
+      amount: order.amount, // server-side amount only
+      msisdn: order.buyerPhone,
+      reference,
+      callbackUrl: env.PAYME_CALLBACK_URL,
+    });
+  } catch (error) {
+    await prisma.payment.upsert({
+      where: { orderId: order.id },
+      update: {
+        provider: PAYMENT_PROVIDER,
+        paymentReference: reference,
+        amount: order.amount,
+        status: PAYMENT_STATUS.FAILED,
+        rawResponse: { error: (error as Error).message } as Prisma.InputJsonValue,
+      },
+      create: {
+        orderId: order.id,
+        provider: PAYMENT_PROVIDER,
+        paymentReference: reference,
+        amount: order.amount,
+        status: PAYMENT_STATUS.FAILED,
+        rawResponse: { error: (error as Error).message } as Prisma.InputJsonValue,
+      },
+    });
+    throw new AppError(409, 'PAYMENT_INITIATION_FAILED', 'Could not start the payment. Please try again.');
+  }
 
   const payment = await prisma.payment.upsert({
     where: { orderId: order.id },
     update: {
-      provider: 'selcom',
-      paymentReference: result.paymentReference,
-      transactionReference: result.transactionReference ?? null,
+      provider: PAYMENT_PROVIDER,
+      paymentReference: reference,
+      transactionReference: response.transaction_id ?? null,
       amount: order.amount,
-      rawResponse: result.raw as Prisma.InputJsonValue,
+      status: PAYMENT_STATUS.PENDING,
+      rawResponse: response as Prisma.InputJsonValue,
     },
     create: {
       orderId: order.id,
-      provider: 'selcom',
-      paymentReference: result.paymentReference,
-      transactionReference: result.transactionReference ?? null,
+      provider: PAYMENT_PROVIDER,
+      paymentReference: reference,
+      transactionReference: response.transaction_id ?? null,
       amount: order.amount,
       status: PAYMENT_STATUS.PENDING,
-      rawResponse: result.raw as Prisma.InputJsonValue,
+      rawResponse: response as Prisma.InputJsonValue,
     },
   });
 
   return {
+    paymentId: payment.id,
     orderId: order.id,
-    orderStatus: order.status,
-    paymentStatus: payment.status,
-    paymentReference: payment.paymentReference,
+    status: payment.status,
+    transactionId: payment.transactionReference,
+    message: 'USSD prompt sent to your phone',
   };
 }
 
-interface CompletionInput {
-  transactionReference?: string;
-  paymentReference?: string;
-  raw?: unknown;
-}
-
-/** Marks a verified payment as completed. Idempotent. */
-export async function completePayment(
+/** Marks a payment + order FAILED. Never issues a download token. */
+export async function markPaymentFailed(
   orderId: string,
-  input: CompletionInput
+  reason: string,
+  payload?: unknown
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const existing = await tx.payment.findUnique({ where: { orderId } });
+    const merged =
+      payload && typeof payload === 'object'
+        ? { ...(payload as Record<string, unknown>), error: reason }
+        : { error: reason };
+    if (existing) {
+      await tx.payment.update({
+        where: { orderId },
+        data: { status: PAYMENT_STATUS.FAILED, rawResponse: merged as Prisma.InputJsonValue },
+      });
+    }
+    await tx.order.updateMany({
+      where: { id: orderId, status: { not: ORDER_STATUS.PAID } },
+      data: { status: ORDER_STATUS.FAILED },
+    });
+  });
+  logger.warn({ orderId, reason }, 'Payment marked FAILED');
+}
+
+/** Marks a verified payment COMPLETED and the order PAID. Idempotent; returns the download token. */
+export async function markPaymentCompleted(orderId: string, payload: unknown): Promise<string> {
+  return prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({ where: { id: orderId } });
     if (!order) {
       throw new AppError(404, 'NOT_FOUND', 'Order not found');
     }
-    if (order.status === ORDER_STATUS.PAID) {
-      return;
-    }
 
-    const rawJson = input.raw === undefined ? undefined : (input.raw as Prisma.InputJsonValue);
-
-    await tx.payment.upsert({
+    await tx.payment.updateMany({
       where: { orderId },
-      update: {
+      data: {
         status: PAYMENT_STATUS.COMPLETED,
         paidAt: new Date(),
-        ...(input.transactionReference ? { transactionReference: input.transactionReference } : {}),
-        ...(input.paymentReference ? { paymentReference: input.paymentReference } : {}),
-        ...(rawJson !== undefined ? { rawResponse: rawJson } : {}),
-      },
-      create: {
-        orderId,
-        provider: 'selcom',
-        status: PAYMENT_STATUS.COMPLETED,
-        amount: order.amount,
-        paidAt: new Date(),
-        transactionReference: input.transactionReference ?? null,
-        paymentReference: input.paymentReference ?? null,
-        ...(rawJson !== undefined ? { rawResponse: rawJson } : {}),
+        rawResponse: payload as Prisma.InputJsonValue,
       },
     });
 
+    const token = order.downloadToken ?? generateDownloadToken();
     await tx.order.update({
       where: { id: orderId },
-      data: {
-        status: ORDER_STATUS.PAID,
-        downloadToken: order.downloadToken ?? generateDownloadToken(),
-      },
+      data: { status: ORDER_STATUS.PAID, downloadToken: token },
     });
+    return token;
   });
 }
 
@@ -116,7 +155,8 @@ function assertFreshTimestamp(timestamp: string | undefined): void {
   if (!timestamp) {
     throw new AppError(401, 'INVALID_SIGNATURE', 'Missing callback timestamp');
   }
-  const parsed = Number(timestamp) < 1e12 ? Number(timestamp) * 1000 : Number(timestamp);
+  const parsedNumber = Number(timestamp);
+  const parsed = parsedNumber < 1e12 ? parsedNumber * 1000 : parsedNumber;
   if (!Number.isFinite(parsed)) {
     throw new AppError(401, 'INVALID_SIGNATURE', 'Invalid callback timestamp');
   }
@@ -125,65 +165,116 @@ function assertFreshTimestamp(timestamp: string | undefined): void {
   }
 }
 
+interface PaymeWebhookPayload {
+  transid?: string;
+  reference?: string;
+  result?: string;
+  payment_status?: string;
+  amount?: string | number;
+  msisdn?: string;
+  [key: string]: unknown;
+}
+
 /**
- * Handles a Selcom callback.
- *
- * Signature and timestamp are verified here. Field mapping for the callback
- * payload is intentionally left unimplemented until the official documentation
- * is provided — we must not invent field names.
+ * Handles a PayMe webhook. Signature + timestamp are verified before any state
+ * change, and the returned amount must match the order amount exactly.
  */
 export async function handleCallback(
   rawBody: Buffer,
   signature: string | undefined,
   timestamp: string | undefined
-): Promise<void> {
-  if (!env.selcomConfigured) {
-    throw new AppError(503, 'SELCOM_NOT_CONFIGURED', 'Selcom integration is not configured yet');
-  }
-
+): Promise<{ received: true; idempotent?: boolean; pending?: boolean }> {
   assertFreshTimestamp(timestamp);
 
-  const isValid = selcom.verifyCallbackSignature(rawBody, signature, timestamp);
-  if (!isValid) {
+  if (!payme.verifyWebhookSignature(rawBody, signature, timestamp)) {
     throw new AppError(401, 'INVALID_SIGNATURE', 'Callback signature verification failed');
   }
 
-  // TODO(official-docs): parse the documented callback payload, extract the
-  // order/payment references, re-query Selcom with queryOrderStatus(), and call
-  // completePayment() only when Selcom confirms success.
-  throw new AppError(
-    501,
-    'SELCOM_NOT_IMPLEMENTED',
-    'Callback processing awaits the official Selcom API documentation'
-  );
+  let payload: PaymeWebhookPayload;
+  try {
+    payload = JSON.parse(rawBody.toString('utf8')) as PaymeWebhookPayload;
+  } catch {
+    throw new AppError(400, 'INVALID_CALLBACK', 'Malformed callback body');
+  }
+
+  const orderId = orderIdFromReference(String(payload.reference ?? ''));
+  if (!orderId) {
+    throw new AppError(404, 'NOT_FOUND', 'Unknown payment reference');
+  }
+
+  const payment = await prisma.payment.findFirst({
+    where: { paymentReference: referenceForOrder(orderId) },
+    include: { order: true },
+  });
+  if (!payment) {
+    throw new AppError(404, 'NOT_FOUND', 'Payment not found');
+  }
+
+  // Idempotent replay.
+  if (payment.status === PAYMENT_STATUS.COMPLETED) {
+    return { received: true, idempotent: true };
+  }
+
+  const status = String(payload.payment_status ?? '').toUpperCase();
+  const result = String(payload.result ?? '').toUpperCase();
+
+  if (status !== 'COMPLETED' && result !== 'SUCCESS') {
+    if (status === 'FAILED' || result === 'FAILED') {
+      await markPaymentFailed(orderId, 'Provider reported a failed payment', payload);
+      throw new AppError(400, 'PAYMENT_FAILED', 'Payment was not successful');
+    }
+    // Pending/other notification: acknowledge without changing state.
+    return { received: true, pending: true };
+  }
+
+  const receivedAmount = Number(payload.amount);
+  if (!Number.isFinite(receivedAmount) || receivedAmount !== payment.order.amount) {
+    logger.warn(
+      { reference: payment.paymentReference, expected: payment.order.amount, received: payload.amount },
+      'Payment amount mismatch — refusing to mark PAID'
+    );
+    await markPaymentFailed(
+      orderId,
+      `Amount mismatch: expected ${payment.order.amount}, received ${payload.amount}`,
+      payload
+    );
+    throw new AppError(400, 'AMOUNT_MISMATCH', 'Payment amount does not match the order');
+  }
+
+  await markPaymentCompleted(orderId, payload);
+  return { received: true };
 }
 
-/** Polls Selcom for orders stuck in PENDING (callbacks can be blocked by networks). */
-export async function pollStalePendingOrders(): Promise<void> {
-  if (!env.selcomConfigured) return;
-
-  const cutoff = new Date(Date.now() - STALE_PENDING_MS);
-  const staleOrders = await prisma.order.findMany({
-    where: { status: ORDER_STATUS.PENDING, createdAt: { lt: cutoff } },
-    include: { payment: true },
-    take: 25,
+export async function getPaymentStatus(paymentId: string) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: {
+      order: {
+        select: {
+          id: true,
+          status: true,
+          amount: true,
+          bookId: true,
+          downloadToken: true,
+          book: { select: { title: true } },
+        },
+      },
+    },
   });
-
-  for (const order of staleOrders) {
-    try {
-      const status = await selcom.queryOrderStatus(order.id);
-      if (status.paid) {
-        await completePayment(order.id, {
-          transactionReference: status.transactionReference,
-          paymentReference: status.paymentReference,
-          raw: status.raw,
-        });
-        logger.info({ orderId: order.id }, 'Polling reconciled a paid order');
-      }
-    } catch (error) {
-      logger.warn({ err: error, orderId: order.id }, 'Order status polling failed');
-    }
+  if (!payment) {
+    throw new AppError(404, 'NOT_FOUND', 'Payment not found');
   }
+
+  return {
+    id: payment.id,
+    status: payment.status,
+    amount: payment.amount,
+    orderId: payment.orderId,
+    orderStatus: payment.order.status,
+    bookId: payment.order.bookId,
+    bookTitle: payment.order.book?.title ?? null,
+    downloadToken: payment.order.status === ORDER_STATUS.PAID ? payment.order.downloadToken : null,
+  };
 }
 
 export async function listPayments(query: {

@@ -132,7 +132,7 @@ export default function App() {
             <Route path="/best-sellers" element={<BestSellers />} />
             <Route path="/new-arrivals" element={<NewArrivals />} />
             <Route path="/checkout/:bookId" element={<Checkout />} />
-            <Route path="/payment-status/:orderId" element={<PaymentStatus />} />
+            <Route path="/payment-status/:paymentId" element={<PaymentStatus />} />
             <Route path="/download/:token" element={<Download />} />
             <Route path="/about" element={<About />} />
             <Route path="/contact" element={<Contact />} />

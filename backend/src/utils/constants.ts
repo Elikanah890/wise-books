@@ -24,6 +24,9 @@ export const PAYMENT_STATUS = {
 
 export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 
+export const PAYMENT_PROVIDER = 'PAYME' as const;
+export type PaymentProvider = typeof PAYMENT_PROVIDER;
+
 export const ROLE = {
   ADMIN: 'ADMIN',
   USER: 'USER',
