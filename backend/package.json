@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "seed": "tsx prisma/seed.ts",
     "test:phone": "tsx tests/phone.test.ts",
+    "test:webhook": "tsx tests/webhook.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "prisma": {

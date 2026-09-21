@@ -203,6 +203,25 @@ interface PaymeWebhookPayload {
   [key: string]: unknown;
 }
 
+export type PaymeWebhookOutcome = 'FAILED' | 'PENDING' | 'COMPLETED';
+
+/**
+ * Classifies a PayMe webhook. A webhook may only be treated as COMPLETED when
+ * PayMe reports payment_status = COMPLETED. The "wallet push successful"
+ * notification arrives with result=SUCCESS but payment_status=PENDING and MUST
+ * be treated as PENDING (otherwise the book is released before payment).
+ */
+export function classifyWebhook(payload: {
+  result?: string;
+  payment_status?: string;
+}): PaymeWebhookOutcome {
+  const status = String(payload.payment_status ?? '').toUpperCase();
+  const result = String(payload.result ?? '').toUpperCase();
+  if (status === 'FAILED' || result === 'FAILED') return 'FAILED';
+  if (status !== 'COMPLETED') return 'PENDING';
+  return 'COMPLETED';
+}
+
 /**
  * Handles a PayMe webhook. Signature + timestamp are verified before any state
  * change, and the returned amount must match the order amount exactly.
@@ -243,15 +262,18 @@ export async function handleCallback(
     return { received: true, idempotent: true };
   }
 
-  const status = String(payload.payment_status ?? '').toUpperCase();
-  const result = String(payload.result ?? '').toUpperCase();
+  // CRITICAL: only a provider-CONFIRMED 'COMPLETED' status may release the book.
+  // PayMe also sends a "wallet push" notification with result=SUCCESS but
+  // payment_status=PENDING the moment the USSD prompt is sent — that must NOT
+  // mark the order PAID. Anything that is not COMPLETED is acknowledged only.
+  const outcome = classifyWebhook(payload);
 
-  if (status !== 'COMPLETED' && result !== 'SUCCESS') {
-    if (status === 'FAILED' || result === 'FAILED') {
-      await markPaymentFailed(orderId, 'Provider reported a failed payment', payload);
-      throw new AppError(400, 'PAYMENT_FAILED', 'Payment was not successful');
-    }
-    // Pending/other notification: acknowledge without changing state.
+  if (outcome === 'FAILED') {
+    await markPaymentFailed(orderId, 'Provider reported a failed payment', payload);
+    throw new AppError(400, 'PAYMENT_FAILED', 'Payment was not successful');
+  }
+
+  if (outcome === 'PENDING') {
     return { received: true, pending: true };
   }
 
@@ -274,7 +296,45 @@ export async function handleCallback(
     throw new AppError(400, 'AMOUNT_MISMATCH', 'Payment amount does not match the order');
   }
 
-  await markPaymentCompleted(orderId, payload);
+  // Second, independent confirmation straight from PayMe before releasing the
+  // download. The webhook is signed, but we only mark PAID once the live query
+  // reports provider_checked === true and payment_status === COMPLETED.
+  const reference = payment.paymentReference ?? referenceForOrder(orderId);
+  let verification: payme.PaymeQueryResponse;
+  try {
+    verification = await payme.queryTransaction(reference);
+  } catch (error) {
+    logger.warn(
+      { reference, err: (error as Error).message },
+      'Could not verify webhook with PayMe — leaving PENDING for polling'
+    );
+    return { received: true, pending: true };
+  }
+
+  const verifiedStatus = String(verification.payment_status ?? '').toUpperCase();
+  if (verification.provider_checked !== true || verifiedStatus !== 'COMPLETED') {
+    logger.warn(
+      { reference, verifiedStatus, providerChecked: verification.provider_checked },
+      'Webhook said COMPLETED but PayMe query did not confirm — leaving PENDING'
+    );
+    return { received: true, pending: true };
+  }
+
+  const verifiedAmount = Number(verification.amount);
+  if (!amountIsAcceptable(verifiedAmount, payment.order.amount)) {
+    logger.warn(
+      { reference, expected: payment.order.amount, received: verification.amount },
+      'Verified amount mismatch — refusing to mark PAID'
+    );
+    await markPaymentFailed(
+      orderId,
+      `Amount mismatch (verified): expected ${payment.order.amount}, received ${verification.amount}`,
+      verification
+    );
+    throw new AppError(400, 'AMOUNT_MISMATCH', 'Payment amount does not match the order');
+  }
+
+  await markPaymentCompleted(orderId, verification);
   return { received: true };
 }
 
