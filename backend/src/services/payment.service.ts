@@ -48,6 +48,10 @@ export async function initiatePayment(orderId: string) {
       callbackUrl: env.PAYME_CALLBACK_URL,
     });
   } catch (error) {
+    const message =
+      error instanceof AppError && error.message
+        ? error.message
+        : 'Could not start the payment. Please try again.';
     await prisma.payment.upsert({
       where: { orderId: order.id },
       update: {
@@ -55,7 +59,7 @@ export async function initiatePayment(orderId: string) {
         paymentReference: reference,
         amount: order.amount,
         status: PAYMENT_STATUS.FAILED,
-        rawResponse: { error: (error as Error).message } as Prisma.InputJsonValue,
+        rawResponse: { error: message } as Prisma.InputJsonValue,
       },
       create: {
         orderId: order.id,
@@ -63,10 +67,10 @@ export async function initiatePayment(orderId: string) {
         paymentReference: reference,
         amount: order.amount,
         status: PAYMENT_STATUS.FAILED,
-        rawResponse: { error: (error as Error).message } as Prisma.InputJsonValue,
+        rawResponse: { error: message } as Prisma.InputJsonValue,
       },
     });
-    throw new AppError(409, 'PAYMENT_INITIATION_FAILED', 'Could not start the payment. Please try again.');
+    throw new AppError(409, 'PAYMENT_INITIATION_FAILED', message);
   }
 
   const payment = await prisma.payment.upsert({

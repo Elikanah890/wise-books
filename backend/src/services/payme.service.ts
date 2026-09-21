@@ -77,8 +77,21 @@ async function post<T>(path: string, body: Record<string, unknown>): Promise<T> 
     }
 
     if (!response.ok) {
-      logger.warn({ path, status: response.status }, 'PayMe request returned a non-2xx status');
-      throw new AppError(502, 'PAYME_ERROR', 'Payment provider request failed');
+      const record = json as {
+        message?: string;
+        error?: string;
+        provider_response?: { message?: string };
+      };
+      const providerMessage =
+        record.message ??
+        record.provider_response?.message ??
+        record.error ??
+        `Payment provider returned HTTP ${response.status}`;
+      logger.warn(
+        { path, status: response.status, providerMessage },
+        'PayMe request rejected'
+      );
+      throw new AppError(502, 'PAYME_ERROR', providerMessage);
     }
 
     return json as T;
