@@ -167,6 +167,18 @@ export async function markPaymentCompleted(orderId: string, payload: unknown): P
   });
 }
 
+/**
+ * Returns true when the amount confirmed by PayMe is acceptable for the order.
+ * Exact match always passes. A configured tolerance allows for the provider's
+ * transaction fee, but anything below (amount - tolerance) is rejected.
+ */
+export function amountIsAcceptable(received: number, expected: number): boolean {
+  if (!Number.isFinite(received)) return false;
+  if (received === expected) return true;
+  const tolerance = Math.round((expected * env.PAYME_AMOUNT_TOLERANCE_PERCENT) / 100);
+  return received >= expected - tolerance && received <= expected;
+}
+
 function assertFreshTimestamp(timestamp: string | undefined): void {
   if (!timestamp) {
     throw new AppError(401, 'INVALID_SIGNATURE', 'Missing callback timestamp');
@@ -244,9 +256,14 @@ export async function handleCallback(
   }
 
   const receivedAmount = Number(payload.amount);
-  if (!Number.isFinite(receivedAmount) || receivedAmount !== payment.order.amount) {
+  if (!amountIsAcceptable(receivedAmount, payment.order.amount)) {
     logger.warn(
-      { reference: payment.paymentReference, expected: payment.order.amount, received: payload.amount },
+      {
+        reference: payment.paymentReference,
+        expected: payment.order.amount,
+        received: payload.amount,
+        tolerancePercent: env.PAYME_AMOUNT_TOLERANCE_PERCENT,
+      },
       'Payment amount mismatch — refusing to mark PAID'
     );
     await markPaymentFailed(

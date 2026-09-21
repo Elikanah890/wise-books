@@ -2,7 +2,12 @@ import { env } from '../config/env';
 import { logger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { PAYMENT_PROVIDER, PAYMENT_STATUS } from '../utils/constants';
-import { markPaymentCompleted, markPaymentFailed, referenceForOrder } from './payment.service';
+import {
+  amountIsAcceptable,
+  markPaymentCompleted,
+  markPaymentFailed,
+  referenceForOrder,
+} from './payment.service';
 import * as payme from './payme.service';
 
 const STALE_PENDING_MS = 30 * 1000;
@@ -49,7 +54,7 @@ export async function pollPendingPayments(): Promise<void> {
           continue;
         }
         const received = Number(result.amount);
-        if (!Number.isFinite(received) || received !== payment.order.amount) {
+        if (!amountIsAcceptable(received, payment.order.amount)) {
           logger.warn(
             { paymentId: payment.id, expected: payment.order.amount, received: result.amount },
             'Polling amount mismatch — refusing to mark PAID'

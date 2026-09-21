@@ -26,6 +26,10 @@ const envSchema = z.object({
     .default('https://api-wisebook.brandtechtz.co.tz/api/payments/payme/callback'),
   PAYME_QUERY_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
   PAYME_QUERY_MAX_ATTEMPTS: z.coerce.number().int().positive().default(40),
+  // PayMe nets a transaction fee, so the confirmed amount can be slightly lower
+  // than the requested amount. 0 = strict exact match (most secure). We still
+  // never accept an amount below (amount - tolerance).
+  PAYME_AMOUNT_TOLERANCE_PERCENT: z.coerce.number().min(0).max(100).default(0),
 });
 
 const parsed = envSchema.safeParse(process.env);
