@@ -25,11 +25,18 @@ export function validate(schemas: ValidationSchemas) {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
+        // A field-level refinement can request a specific error code/message
+        // (e.g. INVALID_PHONE) via issue.params.errorCode.
+        const coded = error.issues.find(
+          (issue) =>
+            (issue as unknown as { params?: { errorCode?: string } }).params?.errorCode
+        ) as unknown as { params?: { errorCode?: string }; message: string } | undefined;
+
         next(
           new AppError(
             400,
-            'VALIDATION_ERROR',
-            'Request validation failed',
+            coded?.params?.errorCode ?? 'VALIDATION_ERROR',
+            coded?.message ?? 'Request validation failed',
             error.issues.map((issue) => ({
               path: issue.path.join('.'),
               message: issue.message,

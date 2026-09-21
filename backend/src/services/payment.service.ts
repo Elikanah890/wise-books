@@ -9,6 +9,7 @@ import {
   PAYMENT_STATUS,
   type PaymentStatus,
 } from '../utils/constants';
+import { normalizeTzPhone } from '../utils/phone';
 import { generateDownloadToken } from '../utils/token';
 import * as payme from './payme.service';
 
@@ -39,11 +40,22 @@ export async function initiatePayment(orderId: string) {
 
   const reference = referenceForOrder(order.id);
 
+  // Defence in depth: never send a non-conforming MSISDN to PayMe, even for
+  // legacy orders stored before validation was tightened.
+  const msisdn = normalizeTzPhone(order.buyerPhone);
+  if (!msisdn) {
+    throw new AppError(
+      400,
+      'INVALID_PHONE',
+      'Enter a valid Tanzanian phone number (e.g., 0712345678 or 255712345678)'
+    );
+  }
+
   let response: payme.PaymeCollectionResponse;
   try {
     response = await payme.createCollection({
       amount: order.amount, // server-side amount only
-      msisdn: order.buyerPhone,
+      msisdn,
       reference,
       callbackUrl: env.PAYME_CALLBACK_URL,
     });

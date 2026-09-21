@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { ORDER_STATUS, PAYMENT_STATUS } from '../utils/constants';
+import { normalizeTzPhone } from '../utils/phone';
+
+const INVALID_PHONE_MESSAGE =
+  'Enter a valid Tanzanian phone number (e.g., 0712345678 or 255712345678)';
 
 export const createOrderSchema = z.object({
   bookId: z.string().uuid('A valid book is required'),
@@ -7,7 +11,18 @@ export const createOrderSchema = z.object({
   buyerPhone: z
     .string()
     .trim()
-    .regex(/^[0-9+\s-]{9,20}$/, 'A valid phone number is required'),
+    .transform((value, ctx) => {
+      const normalized = normalizeTzPhone(value);
+      if (!normalized) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: INVALID_PHONE_MESSAGE,
+          params: { errorCode: 'INVALID_PHONE' },
+        });
+        return z.NEVER;
+      }
+      return normalized;
+    }),
 });
 
 export const orderIdParamSchema = z.object({

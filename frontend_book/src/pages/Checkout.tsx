@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { useT } from '../contexts/LanguageContext';
 import type { Book } from '../types/book';
 import { formatCurrency, getImageUrl } from '../utils/helpers';
+import { normalizeTzPhone } from '../utils/phone';
 
 export default function Checkout() {
   const t = useT();
@@ -35,13 +36,19 @@ export default function Checkout() {
     event.preventDefault();
     if (!book) return;
     setError('');
+
+    const phone = normalizeTzPhone(buyerPhone);
+    if (!phone) {
+      setError('Enter a valid Tanzanian phone number (e.g., 0712345678 or 255712345678)');
+      return;
+    }
+
     setSubmitting(true);
-    const normalizedPhone = `+255${buyerPhone.replace(/\D/g, '').replace(/^0+/, '')}`;
     try {
       const order = await ordersApi.create({
         bookId: book.id,
         buyerEmail: buyerEmail.trim(),
-        buyerPhone: normalizedPhone,
+        buyerPhone: phone,
       });
       // Ask the backend to start the PayMe collection; it returns the paymentId to poll.
       const payment = await paymentsApi.initiate(order.id);
@@ -130,20 +137,20 @@ export default function Checkout() {
             >
               {t.checkout.phone}
             </label>
-            <div className="flex">
-              <span className="inline-flex items-center gap-1 rounded-l-lg border border-r-0 border-gray-300 bg-gray-50 px-3 text-sm font-medium text-gray-600 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300">
-                <Phone className="h-4 w-4" aria-hidden="true" />
-                +255
-              </span>
+            <div className="relative">
+              <Phone
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                aria-hidden="true"
+              />
               <input
                 id="checkout-phone"
                 type="tel"
-                inputMode="numeric"
+                inputMode="tel"
                 value={buyerPhone}
                 onChange={(event) => setBuyerPhone(event.target.value)}
-                placeholder="688 138 821"
+                placeholder="0712345678 or 255712345678"
                 required
-                className="w-full rounded-r-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-4 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
               />
             </div>
           </div>
