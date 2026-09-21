@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Char(36)
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  role         String   @default("ADMIN") @db.VarChar(20)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Category {
+  id          String   @id @default(uuid()) @db.Char(36)
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  books Book[]
+
+  @@map("categories")
+}
+
+model Book {
+  id             String   @id @default(uuid()) @db.Char(36)
+  categoryId     String   @map("category_id") @db.Char(36)
+  title          String
+  author         String
+  description    String?
+  price          Int
+  language       String   @default("English")
+  pages          Int?
+  publisher      String?
+  format         String   @default("PDF")
+  rating         Float?
+  googleDriveUrl String?  @map("google_drive_url")
+  isEbook        Boolean  @default(false) @map("is_ebook")
+  isFeatured     Boolean  @default(false) @map("is_featured")
+  isBestSeller   Boolean  @default(false) @map("is_best_seller")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  category Category    @relation(fields: [categoryId], references: [id])
+  images   BookImage[]
+  orders   Order[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isEbook])
+  @@index([isFeatured])
+  @@index([isBestSeller])
+  @@map("books")
+}
+
+model BookImage {
+  id        String   @id @default(uuid()) @db.Char(36)
+  bookId    String   @map("book_id") @db.Char(36)
+  path      String
+  isPrimary Boolean  @default(false) @map("is_primary")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@map("book_images")
+}
+
+model Order {
+  id            String   @id @default(uuid()) @db.Char(36)
+  bookId        String   @map("book_id") @db.Char(36)
+  amount        Int
+  status        String   @default("PENDING") @db.VarChar(20)
+  buyerEmail    String   @map("buyer_email")
+  buyerPhone    String   @map("buyer_phone")
+  downloadToken String?  @unique @map("download_token")
+  downloadCount Int      @default(0) @map("download_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  book    Book     @relation(fields: [bookId], references: [id])
+  payment Payment?
+
+  @@index([bookId])
+  @@index([status])
+  @@index([buyerEmail])
+  @@map("orders")
+}
+
+model SiteSetting {
+  id        Int      @id @default(1)
+  data      Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("site_settings")
+}
+
+model Comment {
+  id        String   @id @default(uuid()) @db.Char(36)
+  name      String
+  location  String?
+  quote     String   @db.VarChar(600)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("comments")
+}
+
+model Payment {
+  id                   String    @id @default(uuid()) @db.Char(36)
+  orderId              String    @unique @map("order_id") @db.Char(36)
+  provider             String
+  transactionReference String?   @map("transaction_reference")
+  paymentReference     String?   @map("payment_reference")
+  amount               Int
+  status               String    @default("PENDING") @db.VarChar(20)
+  rawResponse          Json?     @map("raw_response")
+  paidAt               DateTime? @map("paid_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}

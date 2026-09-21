@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /super/
+Disallow: /profile/
+Disallow: /dashboard/
+Disallow: /cart/
+Disallow: /checkout/
+Disallow: /orders/
+Disallow: /wishlist/
+Disallow: /library/
+Disallow: /addresses/
+Disallow: /notifications/
+Disallow: /read/
+Disallow: /payment/
+
+Sitemap: https://wisebook.brandtechtz.co.tz/sitemap.xml

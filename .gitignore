@@ -1,0 +1,24 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+!frontend_book/.env.production
+uploads/
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# Stray local files
+gg.jpeg
+
+# Local backups and tooling artifacts (never commit)
+*.postgres.backup/
+.playwright-mcp/
+*.swp
+*.swo
+*~
+.~lock.*
+Thumbs.db
